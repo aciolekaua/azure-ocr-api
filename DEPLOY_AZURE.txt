@@ -1,0 +1,357 @@
+# DEPLOY DA API OCR NO AZURE APP SERVICE
+
+## 🎯 Objetivo
+Deploy da API Azure OCR no Azure App Service para que o FIQON possa acessar via URL pública.
+
+## 📋 Pré-requisitos
+- Conta Azure ativa
+- Docker Desktop instalado
+- Azure CLI instalado (opcional)
+- Projeto ocr-api funcionando localmente
+
+## 🔧 PASSO 1: Preparar o Projeto
+
+### 1.1 Atualizar Dockerfile para produção
+```dockerfile
+FROM python:3.11-slim
+
+# Definir variáveis de ambiente
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
+
+# Definir diretório de trabalho
+WORKDIR /app
+
+# Instalar dependências básicas do sistema
+RUN apt-get update && apt-get install -y \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar requirements e instalar dependências Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código da aplicação
+COPY app/ ./app/
+
+# Expor porta (Azure usa variável PORT)
+EXPOSE $PORT
+
+# Comando para iniciar
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port $PORT"]
+```
+
+### 1.2 Criar arquivo .dockerignore otimizado
+```dockerignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git
+.mypy_cache
+.pytest_cache
+.hypothesis
+
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Documentation
+README.md
+docs/
+
+# Test files
+test_*.py
+*.ps1
+pdf/
+
+# Logs
+logs/
+*.log
+```
+
+## 🚀 PASSO 2: Deploy via Azure Portal
+
+### 2.1 Criar App Service
+1. **Acesse** [Azure Portal](https://portal.azure.com)
+2. **Clique** em "Create a resource"
+3. **Procure** por "App Service"
+4. **Clique** em "Create"
+
+### 2.2 Configurar App Service
+```
+Subscription: Sua assinatura
+Resource Group: Criar novo (ex: rg-ocr-api)
+Name: ocr-api-prod (deve ser único globalmente)
+Publish: Docker Container
+Operating System: Linux
+Region: Escolha a mais próxima (ex: Brazil South)
+Pricing Plan: Basic B1 (ou Free F1 para teste)
+```
+
+### 2.3 Configurar Container
+```
+Image Source: Docker Hub
+Access Type: Public
+Image and Tag: SeuDockerHub/ocr-api:latest
+```
+
+## 🐳 PASSO 3: Build e Push da Imagem
+
+### 3.1 Build da imagem
+```bash
+# Na pasta ocr-api
+docker build -t ocr-api:latest .
+```
+
+### 3.2 Tag para Azure Container Registry
+```bash
+# Criar Azure Container Registry (se não tiver)
+az acr create --resource-group rg-ocr-api --name ocrapi --sku Basic
+
+# Login no ACR
+az acr login --name ocrapi
+
+# Tag da imagem
+docker tag ocr-api:latest ocrapi.azurecr.io/ocr-api:latest
+
+# Push para ACR
+docker push ocrapi.azurecr.io/ocr-api:latest
+```
+
+### 3.3 Configurar App Service
+```
+Image Source: Azure Container Registry
+Registry: ocrapi.azurecr.io
+Image: ocr-api
+Tag: latest
+```
+
+## ⚙️ PASSO 4: Configurar Variáveis de Ambiente
+
+### 4.1 No Azure Portal
+1. **Vá** para seu App Service
+2. **Clique** em "Configuration"
+3. **Adicione** as variáveis:
+
+```
+DI_KEY = sua_chave_azure_ocr
+DI_ENDPOINT = https://seu-recurso.cognitiveservices.azure.com/
+```
+
+### 4.2 Configurações adicionais
+```
+WEBSITES_PORT = 8000
+WEBSITES_ENABLE_APP_SERVICE_STORAGE = false
+```
+
+## 🌐 PASSO 5: Testar Deploy
+
+### 5.1 URL da API
+Após o deploy, sua API estará disponível em:
+```
+https://ocr-api-prod.azurewebsites.net
+```
+
+### 5.2 Testes
+```bash
+# Health check
+curl https://ocr-api-prod.azurewebsites.net/health
+
+# Listar modelos
+curl https://ocr-api-prod.azurewebsites.net/models
+
+# Teste de análise
+curl -X POST "https://ocr-api-prod.azurewebsites.net/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_data": "base64_string",
+    "file_type": "image",
+    "model": "prebuilt-receipt"
+  }'
+```
+
+## 🔄 PASSO 6: Atualizar Guia FIQON
+
+### 6.1 Nova URL no FIQON
+```javascript
+// Atualizar URL no código FIQON
+const API_URL = 'https://ocr-api-prod.azurewebsites.net';
+
+async function processDocument(fileBase64, fileType, model) {
+    const response = await fetch(`${API_URL}/analyze`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            file_data: fileBase64,
+            file_type: fileType,
+            model: model
+        })
+    });
+    
+    return await response.json();
+}
+```
+
+## 💰 CUSTOS ESTIMADOS
+
+### Azure App Service (Basic B1):
+- **CPU:** 1 core
+- **RAM:** 1.75 GB
+- **Custo:** ~$13/mês
+- **Ideal para:** Produção
+
+### Azure App Service (Free F1):
+- **CPU:** 1 core compartilhado
+- **RAM:** 1 GB
+- **Custo:** Gratuito
+- **Limitações:** 60 minutos/dia, sem SSL customizado
+- **Ideal para:** Testes
+
+## 🔒 SEGURANÇA E OTIMIZAÇÕES
+
+### 1. HTTPS Automático
+- Azure App Service fornece HTTPS automaticamente
+- Certificado SSL gerenciado pela Microsoft
+
+### 2. CORS Configurado
+```python
+# No app/main.py
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://fiqon.com.br"],  # URL do FIQON
+    allow_credentials=True,
+    allow_methods=["POST", "GET"],
+    allow_headers=["*"],
+)
+```
+
+### 3. Rate Limiting (Opcional)
+```python
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.post("/analyze")
+@limiter.limit("10/minute")  # 10 requisições por minuto
+async def analyze_document(request: Request, ...):
+    # código existente
+```
+
+## 📊 MONITORAMENTO
+
+### 1. Logs do App Service
+- **Acesse:** Azure Portal → App Service → Log stream
+- **Monitore:** Erros, performance, uso
+
+### 2. Métricas
+- **CPU Usage**
+- **Memory Usage**
+- **Request Count**
+- **Response Time**
+
+## 🚨 TROUBLESHOOTING
+
+### Problemas Comuns:
+
+#### 1. Container não inicia
+```bash
+# Verificar logs
+az webapp log tail --name ocr-api-prod --resource-group rg-ocr-api
+```
+
+#### 2. Erro de variáveis de ambiente
+- Verificar se DI_KEY e DI_ENDPOINT estão configuradas
+- Reiniciar App Service após alterações
+
+#### 3. Timeout de requisição
+- Aumentar timeout no FIQON
+- Verificar se Azure OCR está funcionando
+
+## 🔄 DEPLOY AUTOMATIZADO (Opcional)
+
+### GitHub Actions
+```yaml
+name: Deploy to Azure App Service
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Build and push Docker image
+      run: |
+        docker build -t ocr-api .
+        docker tag ocr-api ocrapi.azurecr.io/ocr-api:${{ github.sha }}
+        docker push ocrapi.azurecr.io/ocr-api:${{ github.sha }}
+    
+    - name: Deploy to Azure
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ocr-api-prod
+        images: ocrapi.azurecr.io/ocr-api:${{ github.sha }}
+```
+
+## ✅ CHECKLIST DE DEPLOY
+
+### Antes do Deploy:
+- [ ] Dockerfile otimizado para produção
+- [ ] Variáveis de ambiente configuradas
+- [ ] Testes locais funcionando
+- [ ] .dockerignore configurado
+
+### Durante o Deploy:
+- [ ] App Service criado
+- [ ] Container Registry configurado
+- [ ] Imagem buildada e enviada
+- [ ] Variáveis de ambiente definidas
+
+### Após o Deploy:
+- [ ] Health check funcionando
+- [ ] Teste de análise funcionando
+- [ ] URL compartilhada com FIQON
+- [ ] Monitoramento configurado
+
+## 🎯 RESULTADO FINAL
+
+Após o deploy, você terá:
+- ✅ **URL pública:** `https://ocr-api-prod.azurewebsites.net`
+- ✅ **HTTPS automático**
+- ✅ **Escalabilidade automática**
+- ✅ **Monitoramento integrado**
+- ✅ **Backup automático**
+
+O FIQON poderá acessar sua API 24/7 sem você precisar manter nada rodando localmente!

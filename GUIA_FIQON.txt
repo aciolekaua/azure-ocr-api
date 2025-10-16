@@ -1,0 +1,406 @@
+# GUIA DE INTEGRAÇÃO - FIQON → API AZURE OCR
+
+## 📋 Visão Geral
+Este guia explica como integrar o sistema FIQON com a API Azure OCR para processamento de documentos (recibos, faturas, PDFs).
+
+## 🔗 Informações da API
+- **URL:** `http://localhost:8000` (ou URL do servidor onde a API está rodando)
+- **Endpoint:** `POST /analyze`
+- **Content-Type:** `application/json`
+- **Timeout recomendado:** 60 segundos
+
+## 📤 ESTRUTURA DA REQUISIÇÃO
+
+### Payload JSON:
+```json
+{
+  "file_data": "base64_string_do_arquivo",
+  "file_type": "image|pdf",
+  "model": "prebuilt-receipt|prebuilt-invoice|prebuilt-layout|prebuilt-businessCard|prebuilt-idDocument|prebuilt-read",
+  "options": {}
+}
+```
+
+### Parâmetros:
+- **file_data** (string, obrigatório): Arquivo em base64
+- **file_type** (string, obrigatório): "image" ou "pdf"
+- **model** (string, obrigatório): Modelo OCR a usar
+- **options** (object, opcional): Opções adicionais (pode ser vazio {})
+
+## 🎯 MODELOS DISPONÍVEIS
+
+| Modelo | Uso Recomendado | Retorna |
+|--------|----------------|---------|
+| `prebuilt-receipt` | Recibos de vendas | Comerciante, data, itens, total, impostos |
+| `prebuilt-invoice` | Faturas e notas fiscais | Fornecedor, cliente, itens, valores |
+| `prebuilt-layout` | PDFs e documentos gerais | Texto, tabelas, estrutura |
+| `prebuilt-businessCard` | Cartões de visita | Nome, empresa, telefone, email |
+| `prebuilt-idDocument` | Documentos de identidade | Nome, documento, data nascimento |
+| `prebuilt-read` | Apenas texto (OCR) | Texto puro com coordenadas |
+
+## 📊 ESTRUTURA DA RESPOSTA
+
+### ✅ Sucesso (HTTP 200):
+```json
+{
+  "success": true,
+  "document_type": "receipt.retailMeal",
+  "confidence": 0.981,
+  "extracted_data": {
+    "merchant_name": {
+      "value": "Nome do Comerciante",
+      "confidence": 0.989
+    },
+    "total": {
+      "value": 2516.28,
+      "confidence": 0.985
+    },
+    "transaction_date": {
+      "value": "2019-06-10",
+      "confidence": 0.995
+    }
+  },
+  "raw_response": {...},
+  "processing_time": 2.34
+}
+```
+
+### ❌ Erro (HTTP 200 com success: false):
+```json
+{
+  "success": false,
+  "error": "Descrição do erro",
+  "processing_time": 0.5
+}
+```
+
+### ❌ Erro HTTP (4xx/5xx):
+```json
+{
+  "detail": "Mensagem de erro específica"
+}
+```
+
+## 💻 EXEMPLOS DE IMPLEMENTAÇÃO
+
+### 1. JavaScript/Node.js (Para FIQON Web)
+```javascript
+async function processDocument(fileBase64, fileType, model) {
+    try {
+        const payload = {
+            file_data: fileBase64,
+            file_type: fileType,
+            model: model
+        };
+
+        const response = await fetch('http://localhost:8000/analyze', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+        
+        if (result.success) {
+            console.log('Documento processado com sucesso!');
+            console.log('Confiança:', result.confidence);
+            console.log('Dados extraídos:', result.extracted_data);
+            return result;
+        } else {
+            console.error('Erro no processamento:', result.error);
+            return null;
+        }
+    } catch (error) {
+        console.error('Erro na requisição:', error);
+        return null;
+    }
+}
+
+// Exemplo de uso:
+const result = await processDocument(
+    base64String, 
+    'image', 
+    'prebuilt-receipt'
+);
+```
+
+### 2. PHP (Para FIQON Backend)
+```php
+<?php
+function processDocument($fileBase64, $fileType, $model) {
+    $url = 'http://localhost:8000/analyze';
+    
+    $payload = [
+        'file_data' => $fileBase64,
+        'file_type' => $fileType,
+        'model' => $model
+    ];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($payload));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json'
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+    
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    
+    if ($httpCode === 200) {
+        $result = json_decode($response, true);
+        
+        if ($result['success']) {
+            return [
+                'success' => true,
+                'data' => $result['extracted_data'],
+                'confidence' => $result['confidence'],
+                'processing_time' => $result['processing_time']
+            ];
+        } else {
+            return [
+                'success' => false,
+                'error' => $result['error']
+            ];
+        }
+    } else {
+        return [
+            'success' => false,
+            'error' => "HTTP Error: $httpCode"
+        ];
+    }
+}
+
+// Exemplo de uso:
+$result = processDocument($base64File, 'pdf', 'prebuilt-layout');
+if ($result['success']) {
+    echo "Processamento bem-sucedido!";
+    print_r($result['data']);
+} else {
+    echo "Erro: " . $result['error'];
+}
+?>
+```
+
+### 3. Python (Para scripts FIQON)
+```python
+import requests
+import json
+
+def process_document(file_base64, file_type, model):
+    url = "http://localhost:8000/analyze"
+    
+    payload = {
+        "file_data": file_base64,
+        "file_type": file_type,
+        "model": model
+    }
+    
+    try:
+        response = requests.post(
+            url, 
+            json=payload, 
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            if result.get('success'):
+                return {
+                    'success': True,
+                    'data': result.get('extracted_data'),
+                    'confidence': result.get('confidence'),
+                    'processing_time': result.get('processing_time')
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': result.get('error')
+                }
+        else:
+            return {
+                'success': False,
+                'error': f"HTTP {response.status_code}: {response.text}"
+            }
+            
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
+
+# Exemplo de uso:
+result = process_document(base64_string, 'image', 'prebuilt-receipt')
+if result['success']:
+    print("Sucesso!")
+    print(f"Confiança: {result['confidence']}")
+    print(f"Dados: {result['data']}")
+else:
+    print(f"Erro: {result['error']}")
+```
+
+## 🔄 FLUXO DE INTEGRAÇÃO RECOMENDADO
+
+### 1. Upload do Arquivo no FIQON
+```javascript
+// No frontend FIQON
+const fileInput = document.getElementById('fileInput');
+const file = fileInput.files[0];
+
+// Converter para base64
+const reader = new FileReader();
+reader.onload = function(e) {
+    const base64 = e.target.result.split(',')[1]; // Remove data:image/...;base64,
+    
+    // Determinar tipo e modelo
+    const fileType = file.type.startsWith('image/') ? 'image' : 'pdf';
+    const model = determineModel(file); // Sua lógica para escolher modelo
+    
+    // Enviar para API
+    processDocument(base64, fileType, model);
+};
+reader.readAsDataURL(file);
+```
+
+### 2. Processamento no Backend FIQON
+```php
+// No backend FIQON
+public function processDocument($filePath, $fileType) {
+    // Ler arquivo e converter para base64
+    $fileContent = file_get_contents($filePath);
+    $base64 = base64_encode($fileContent);
+    
+    // Determinar modelo baseado no tipo
+    $model = $this->determineModel($fileType, $filePath);
+    
+    // Chamar API OCR
+    $result = $this->callOcrApi($base64, $fileType, $model);
+    
+    // Processar resultado
+    if ($result['success']) {
+        return $this->formatResult($result['data']);
+    } else {
+        throw new Exception($result['error']);
+    }
+}
+
+private function determineModel($fileType, $filePath) {
+    // Sua lógica para determinar o modelo
+    if ($fileType === 'image') {
+        return 'prebuilt-receipt'; // ou outro modelo baseado no contexto
+    } else {
+        return 'prebuilt-layout';
+    }
+}
+```
+
+## ⚠️ LIMITAÇÕES E CONSIDERAÇÕES
+
+### Tamanho do Arquivo:
+- **Máximo:** 10MB
+- **Recomendado:** < 5MB para melhor performance
+- **Dica:** Comprimir imagens antes de enviar
+
+### Timeout:
+- **Recomendado:** 60 segundos
+- **PDFs grandes** podem demorar mais
+
+### Rate Limiting:
+- **Atual:** Sem limite (mas monitorar uso)
+- **Recomendado:** Implementar fila para múltiplas requisições
+
+### Tratamento de Erros:
+```javascript
+// Sempre tratar erros
+try {
+    const result = await processDocument(base64, type, model);
+    
+    if (result && result.success) {
+        // Processar dados extraídos
+        handleSuccess(result.data);
+    } else {
+        // Mostrar erro para o usuário
+        showError(result?.error || 'Erro desconhecido');
+    }
+} catch (error) {
+    console.error('Erro na requisição:', error);
+    showError('Erro de conexão com o serviço OCR');
+}
+```
+
+## 🧪 TESTES E VALIDAÇÃO
+
+### 1. Health Check:
+```bash
+curl http://localhost:8000/health
+# Resposta esperada: {"status":"healthy","service":"azure-ocr-api","version":"1.0.0"}
+```
+
+### 2. Listar Modelos:
+```bash
+curl http://localhost:8000/models
+# Resposta esperada: {"available_models":["prebuilt-receipt",...]}
+```
+
+### 3. Teste com Arquivo:
+```bash
+# Converter arquivo para base64
+base64 -i arquivo.pdf -o arquivo_base64.txt
+
+# Fazer requisição
+curl -X POST "http://localhost:8000/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_data": "'$(cat arquivo_base64.txt)'",
+    "file_type": "pdf",
+    "model": "prebuilt-layout"
+  }'
+```
+
+## 📝 CHECKLIST DE IMPLEMENTAÇÃO
+
+### ✅ Frontend (FIQON Web):
+- [ ] Upload de arquivos (imagem/PDF)
+- [ ] Conversão para base64
+- [ ] Seleção automática do modelo
+- [ ] Envio da requisição
+- [ ] Exibição dos resultados
+- [ ] Tratamento de erros
+- [ ] Loading/Spinner durante processamento
+
+### ✅ Backend (FIQON API):
+- [ ] Endpoint para receber arquivos
+- [ ] Validação de tipo e tamanho
+- [ ] Conversão para base64
+- [ ] Chamada para API OCR
+- [ ] Processamento da resposta
+- [ ] Armazenamento dos resultados
+- [ ] Logs de erro e performance
+
+### ✅ Configuração:
+- [ ] URL da API OCR configurável
+- [ ] Timeout configurável
+- [ ] Modelos por tipo de documento
+- [ ] Limites de tamanho de arquivo
+- [ ] Monitoramento de uso
+
+## 🚀 PRÓXIMOS PASSOS
+
+1. **Implementar** a integração básica
+2. **Testar** com diferentes tipos de arquivo
+3. **Configurar** monitoramento e logs
+4. **Otimizar** performance se necessário
+5. **Documentar** casos de uso específicos do FIQON
+
+## 📞 SUPORTE
+
+Para dúvidas ou problemas:
+- **Logs da API:** Verificar console do Docker
+- **Testes:** Usar scripts de teste fornecidos
+- **Documentação:** Consultar README.md da API
